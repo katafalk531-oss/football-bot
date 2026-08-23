@@ -3,48 +3,197 @@ import logging
 import os
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
-from aiohttp import web
+from aiohttp import web, ClientSession
 
-# Берем токен из переменных окружения Render (безопасно!)
-BOT_TOKEN = "7575444568:AAHEJ1-ESxo6RcDHxEl7CV0UwpXr1U9vaus"
+# ================= НАСТРОЙКИ =================
+BOT_TOKEN = "7575444568:AAHEJ1-ESxo6RcDHxe17CV0UwpXr1U9vaus"
 RAPIDAPI_KEY = "0cf379b94fmsh2e9e4e5fbdc2b78p1efe49jsnb7dc15ae2f06"
+# =============================================
 
 logging.basicConfig(level=logging.INFO)
+
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
+
+# --- ПОИСК КОМАНДЫ ПО НАЗВАНИЮ ---
+async def search_team(session, team_name):
+    url = "https://v3.football.api-sports.io/teams"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "v3.football.api-sports.io"
+    }
+    params = {"name": team_name, "search": team_name}
+    
+    async with session.get(url, headers=headers, params=params) as resp:
+        data = await resp.json()
+        if data.get("response"):
+            return data["response"][0]["team"]
+    return None
+
+# --- ПОСЛЕДНИЕ 5 МАТЧЕЙ КОМАНДЫ ---
+async def get_team_form(session, team_id):
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "v3.football.api-sports.io"
+    }
+    params = {"team": team_id, "last": 5, "status": "FT"}
+    
+    async with session.get(url, headers=headers, params=params) as resp:
+        data = await resp.json()
+    
+    form = []
+    for fixture in data.get("response", []):
+        teams = fixture["teams"]
+        if teams["home"]["id"] == team_id:
+            if fixture["goals"]["home"] > fixture["goals"]["away"]:
+                form.append("W")
+            elif fixture["goals"]["home"] < fixture["goals"]["away"]:
+                form.append("L")
+            else:
+                form.append("D")
+        else:
+            if fixture["goals"]["away"] > fixture["goals"]["home"]:
+                form.append("W")
+            elif fixture["goals"]["away"] < fixture["goals"]["home"]:
+                form.append("L")
+            else:
+                form.append("D")
+    
+    return form
+
+# --- ЛИЧНЫЕ ВСТРЕЧИ (H2H) ---
+async def get_h2h(session, team1_id, team2_id):
+    url = "https://v3.football.api-sports.io/fixtures/headtohead"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "v3.football.api-sports.io"
+    }
+    params = {"h2h": f"{team1_id}-{team2_id}", "last": 5}
+    
+    async with session.get(url, headers=headers, params=params) as resp:
+        data = await resp.json()
+    
+    wins1 = wins2 = draws = 0
+    for fixture in data.get("response", []):
+        if fixture["teams"]["home"]["id"] == team1_id:
+            if fixture["goals"]["home"] > fixture["goals"]["away"]:
+                wins1 += 1
+            elif fixture["goals"]["home"] < fixture["goals"]["away"]:
+                wins2 += 1
+            else:
+                draws += 1
+        else:
+            if fixture["goals"]["away"] > fixture["goals"]["home"]:
+                wins1 += 1
+            elif fixture["goals"]["away"] < fixture["goals"]["home"]:
+                wins2 += 1
+            else:
+                draws += 1
+    
+    return wins1, draws, wins2
+
+# --- АНАЛИЗ МАТЧА ---
+async def analyze_match(team1_name, team2_name):
+    async with ClientSession() as session:
+        team1 = await search_team(session, team1_name)
+        team2 = await search_team(session, team2_name)
+        
+        if not team1 or not team2:
+            return None, "Команды не найдены. Проверь названия (лучше на английском: Spartak, Zenit)."
+        
+        form1 = await get_team_form(session, team1["id"])
+        form2 = await get_team_form(session, team2["id"])
+        h2h_w1, h2h_d, h2h_w2 = await get_h2h(session, team1["id"], team2["id"])
+        
+        score1 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form1)
+        score2 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form2)
+        
+        total = score1 + score2 + (h2h_w1 * 2) + (h2h_w2 * 2) + (h2h_d * 1)
+        if total == 0:
+            prediction = "Ничья"
+            confidence = 33
+        else:
+            prob1 = (score1 + h2h_w1 * 2) / total * 100
+            prob2 = (score2 + h2h_w2 * 2) / total * 100
+            
+            if prob1 > prob2 + 15:
+                prediction = f"Победа {team1_name}"
+                confidence = int(prob1)
+            elif prob2 > prob1 + 15:
+                prediction = f"Победа {team2_name}"
+                confidence = int(prob2)
+            else:
+                prediction = "Ничья или близкий матч"
+                confidence = 40
+        
+        return {
+            "team1": team1["name"],
+            "team2": team2["name"],
+            "form1": "".join(form1) if form1 else "N/A",
+            "form2": "".join(form2) if form2 else "N/A",
+            "h2h": f"{h2h_w1} - {h2h_d} - {h2h_w2}",
+            "prediction": prediction,
+            "confidence": confidence
+        }, None
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Привет! Я бот для анализа матчей. Напиши /help")
+    await message.answer(
+        "👋 Привет! Я бот для анализа футбольных матчей.\n\n"
+        "📋 Команды:\n"
+        "/help — помощь\n"
+        "/predict Спартак Зенит — прогноз на матч"
+    )
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    await message.answer("Напиши /predict Спартак Зенит")
+    await message.answer(
+        "🆘 Как пользоваться:\n\n"
+        "Напиши /predict и через пробел названия двух команд.\n"
+        "💡 Совет: пиши названия на английском для точности\n"
+        "   (Spartak, Zenit, Real Madrid, Barcelona)"
+    )
 
 @dp.message(Command("predict"))
 async def cmd_predict(message: types.Message):
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        await message.answer("Пример: /predict Спартак Зенит")
+        await message.answer("❗ Пример: /predict Spartak Zenit")
         return
+    
     team1, team2 = args[1], args[2]
-    await message.answer(f"⏳ Анализирую {team1} vs {team2}...")
-    await asyncio.sleep(1)
-    await message.answer(f"📊 Прогноз: Победа {team1} (68% уверенности)")
+    await message.answer(f" Анализирую {team1} vs {team2}...")
+    
+    result, error = await analyze_match(team1, team2)
+    
+    if error:
+        await message.answer(f" {error}")
+        return
+    
+    answer = (
+        f"📊 *Анализ: {result['team1']} — {result['team2']}*\n\n"
+        f"🔥 Форма {result['team1']} (посл. 5): {result['form1']}\n"
+        f"🔥 Форма {result['team2']} (посл. 5): {result['form2']}\n"
+        f"🤝 Личные встречи (W-D-L): {result['h2h']}\n\n"
+        f"🧠 *Прогноз:* {result['prediction']}\n"
+        f"📈 Уверенность: {result['confidence']}%\n\n"
+        f"⚠️ _Прогноз на основе статистики. Играйте ответственно._"
+    )
+    await message.answer(answer, parse_mode="Markdown")
 
 @dp.message(F.text)
 async def echo_handler(message: types.Message):
-    await message.answer("Напиши /help")
+    await message.answer(" Напиши /help для списка команд")
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER (чтобы не засыпал) ---
+# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
 async def handle_ping(request):
     return web.Response(text="Bot is alive!")
 
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/', handle_ping)
-    # Render передает порт в переменной PORT, иначе берем 8080
     port = int(os.getenv("PORT", 8080))
     runner = web.AppRunner(app)
     await runner.setup()
@@ -54,7 +203,6 @@ async def start_web_server():
 
 # --- ЗАПУСК ---
 async def main():
-    # Запускаем веб-сервер и поллинг ОДНОВРЕМЕННО
     await asyncio.gather(
         start_web_server(),
         dp.start_polling(bot)
