@@ -6,11 +6,9 @@ from aiogram.filters import Command
 from aiohttp import web
 
 # Берем токен из переменных окружения Render (безопасно!)
-BOT_TOKEN = os.getenv("7575444568:AAHEJ1-ESxo6RcDHxEl7CV0UwpXr1U9vaus")
+BOT_TOKEN = "7575444568:AAHEJ1-ESxo6RcDHxEl7CV0UwpXr1U9vaus"
 
 logging.basicConfig(level=logging.INFO)
-
-bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # --- ОБРАБОТЧИКИ КОМАНД ---
