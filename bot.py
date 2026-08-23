@@ -6,7 +6,7 @@ from aiogram.filters import Command
 from aiohttp import web, ClientSession
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "7575444568:AAHEJ1-ESxo6RcDHxe17CV0UwpXr1U9vaus"
+BOT_TOKEN = "7575444568:AAEHYZMjzWvlUHYbB6-ZkDv8e42xpgpV9YA"
 RAPIDAPI_KEY = "0cf379b94fmsh2e9e4e5fbdc2b78p1efe49jsnb7dc15ae2f06"
 # =============================================
 
