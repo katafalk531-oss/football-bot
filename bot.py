@@ -7,7 +7,6 @@ from aiohttp import web
 
 # Берем токен из переменных окружения Render (безопасно!)
 BOT_TOKEN = "7575444568:AAHEJ1-ESxo6RcDHxEl7CV0UwpXr1U9vaus"
-
 RAPIDAPI_KEY = "0cf379b94fmsh2e9e4e5fbdc2b78p1efe49jsnb7dc15ae2f06"
 
 logging.basicConfig(level=logging.INFO)
