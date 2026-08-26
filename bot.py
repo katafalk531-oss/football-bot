@@ -19,10 +19,9 @@ dp = Dispatcher()
 
 # ================= ОПТИМИЗАЦИЯ API =================
 CACHE = defaultdict(lambda: {"teams": {}, "fixtures": {}, "h2h": {}})
-CACHE_TTL = 600
 last_call_time = 0
 MIN_INTERVAL = 1.0
-COVERAGE = {39, 140, 78, 135, 41, 61}  # АПЛ, Ла Лига, Бундеслига, Серия А, Лига 1 и т.д.
+ERROR_LIMIT = 429
 
 # ================= ФУНКЦИИ =================
 async def safe_call(session, url, headers, params=None):
@@ -34,9 +33,9 @@ async def safe_call(session, url, headers, params=None):
     
     async with session.get(url, headers=headers, params=params) as resp:
         data = await resp.json()
-        if resp.status == 429:
-            await asyncio.sleep(30)
-            return await safe_call(session, url, headers, params)
+        if resp.status == ERROR_LIMIT:
+            logging.warning("Лимит запросов исчерпан.")
+            return {"error": "СЕРВИС_ЗАБЛОКИРОВАН"}
         return data
 
 async def search_team(session, team_name):
@@ -46,6 +45,8 @@ async def search_team(session, team_name):
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
     params = {"name": team_name, "search": team_name}
     data = await safe_call(session, url, headers, params)
+    if isinstance(data, dict) and "error" in data:
+        return None
     if data.get("response"):
         team = data["response"][0]["team"]
         CACHE["teams"][team_name] = team
@@ -101,7 +102,6 @@ async def get_h2h(session, team1_id, team2_id):
     return wins1, draws, wins2
 
 async def get_h2h_xg(session, team1_id, team2_id):
-    # заглушка (можно доработать позже)
     return 0.0, 0.0, 0.0
 
 async def get_match_xg(session, fixture_id):
@@ -109,6 +109,8 @@ async def get_match_xg(session, fixture_id):
     headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
     params = {"fixture": fixture_id}
     data = await safe_call(session, url, headers, params)
+    if isinstance(data, dict) and "error" in data:
+        return 0.0, 0.0, 0.0
     if not data.get("response"):
         return 0.0, 0.0, 0.0
     stats = data["response"][0]
@@ -181,9 +183,11 @@ async def cmd_start(message: types.Message):
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
     await message.answer("🆘 Как пользоваться:\n\n"
-                         "/predict Спартак Зенит — полный анализ с xG, формой и H2H\n"
+                         "/predict Команда1 Команда2 — анализ матча с xG, формой и H2H\n"
                          "/today — список матчей на сегодня\n"
                          "/signal — топ-3 лучших матчей для ставок\n\n"
+                         "⚠️ Лимит запросов на бесплатном аккаунте.\n"
+                         "Если бот пишет «Ваш аккаунт заблокирован» — подними тариф.\n\n"
                          "Все ответы на русском.")
 
 @dp.message(Command("predict"))
@@ -194,7 +198,7 @@ async def cmd_predict(message: types.Message):
         return
     
     team1, team2 = args[1], args[2]
-    await message.answer(f"🔍 Анализирую матч {team1} vs {team2} с xG...")
+    await message.answer(f"🔍 Анализиваю матч {team1} vs {team2} с xG...")
 
     result, error = await analyze_match(team1, team2)
     if error:
