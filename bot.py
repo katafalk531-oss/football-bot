@@ -11,11 +11,10 @@ RAPIDAPI_KEY = "0cf379b94fmsh2e9e4e5fbdc2b78p1efe49jsnb7dc15ae2f06"
 # =============================================
 
 logging.basicConfig(level=logging.INFO)
-
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# --- ПОИСК КОМАНДЫ ПО НАЗВАНИЮ ---
+# --- ПОИСК КОМАНДЫ ---
 async def search_team(session, team_name):
     url = "https://v3.football.api-sports.io/teams"
     headers = {
@@ -23,46 +22,43 @@ async def search_team(session, team_name):
         "X-RapidAPI-Host": "v3.football.api-sports.io"
     }
     params = {"name": team_name, "search": team_name}
-    
     async with session.get(url, headers=headers, params=params) as resp:
         data = await resp.json()
         if data.get("response"):
             return data["response"][0]["team"]
     return None
 
-# --- ПОСЛЕДНИЕ 5 МАТЧЕЙ КОМАНДЫ ---
-async def get_team_form(session, team_id):
+# --- ПОСЛЕДНИЕ 5 МАТЧЕЙ + xG ---
+async def get_team_form_xg(session, team_id):
     url = "https://v3.football.api-sports.io/fixtures"
     headers = {
         "X-RapidAPI-Key": RAPIDAPI_KEY,
         "X-RapidAPI-Host": "v3.football.api-sports.io"
     }
     params = {"team": team_id, "last": 5, "status": "FT"}
-    
     async with session.get(url, headers=headers, params=params) as resp:
         data = await resp.json()
     
     form = []
+    xg_home = xg_away = 0.0
     for fixture in data.get("response", []):
         teams = fixture["teams"]
         if teams["home"]["id"] == team_id:
-            if fixture["goals"]["home"] > fixture["goals"]["away"]:
-                form.append("W")
-            elif fixture["goals"]["home"] < fixture["goals"]["away"]:
-                form.append("L")
-            else:
-                form.append("D")
+            form.append("W" if fixture["goals"]["home"] > fixture["goals"]["away"] else 
+                        "L" if fixture["goals"]["home"] < fixture["goals"]["away"] else "D")
+            xg_home += fixture.get("teams", {}).get("home", {}).get("statistics", {}).get("xG", {}).get("home", 0) or 0
         else:
-            if fixture["goals"]["away"] > fixture["goals"]["home"]:
-                form.append("W")
-            elif fixture["goals"]["away"] < fixture["goals"]["home"]:
-                form.append("L")
-            else:
-                form.append("D")
+            form.append("W" if fixture["goals"]["away"] > fixture["goals"]["home"] else 
+                        "L" if fixture["goals"]["away"] < fixture["goals"]["home"] else "D")
+            xg_away += fixture.get("teams", {}).get("away", {}).get("statistics", {}).get("xG", {}).get("away", 0) or 0
     
-    return form
+    score1 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form)
+    score2 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form[1:])  # простая средняя форма
+    
+    avg_xg = (xg_home + xg_away) / 2
+    return form, score1, score2, round(avg_xg, 2)
 
-# --- ЛИЧНЫЕ ВСТРЕЧИ (H2H) ---
+# --- H2H ---
 async def get_h2h(session, team1_id, team2_id):
     url = "https://v3.football.api-sports.io/fixtures/headtohead"
     headers = {
@@ -70,7 +66,6 @@ async def get_h2h(session, team1_id, team2_id):
         "X-RapidAPI-Host": "v3.football.api-sports.io"
     }
     params = {"h2h": f"{team1_id}-{team2_id}", "last": 5}
-    
     async with session.get(url, headers=headers, params=params) as resp:
         data = await resp.json()
     
@@ -90,42 +85,55 @@ async def get_h2h(session, team1_id, team2_id):
                 wins2 += 1
             else:
                 draws += 1
-    
     return wins1, draws, wins2
 
-# --- АНАЛИЗ МАТЧА ---
+# --- xG для матча (теперь в основном анализе) ---
+async def get_match_xg(session, fixture_id):
+    url = "https://v3.football.api-sports.io/fixtures/statistics"
+    headers = {
+        "X-RapidAPI-Key": RAPIDAPI_KEY,
+        "X-RapidAPI-Host": "v3.football.api-sports.io"
+    }
+    params = {"fixture": fixture_id}
+    async with session.get(url, headers=headers, params=params) as resp:
+        data = await resp.json()
+    if not data.get("response"):
+        return 0.0, 0.0
+    stats = data["response"][0]
+    home_xg = stats.get("teams", {}).get("home", {}).get("statistics", {}).get("xG", {}).get("home", 0) or 0
+    away_xg = stats.get("teams", {}).get("away", {}).get("statistics", {}).get("xG", {}).get("away", 0) or 0
+    return round(home_xg, 2), round(away_xg, 2)
+
+# --- АНАЛИЗ МАТЧА (с xG) ---
 async def analyze_match(team1_name, team2_name):
     async with ClientSession() as session:
         team1 = await search_team(session, team1_name)
         team2 = await search_team(session, team2_name)
         
         if not team1 or not team2:
-            return None, "Команды не найдены. Проверь названия (лучше на английском: Spartak, Zenit)."
-        
-        form1 = await get_team_form(session, team1["id"])
-        form2 = await get_team_form(session, team2["id"])
+            return None, "Команды не найдены. Пиши на английском (Spartak, Zenit)."
+
+        form1, score1, _, xg1 = await get_team_form_xg(session, team1["id"])
+        form2, score2, _, xg2 = await get_team_form_xg(session, team2["id"])
         h2h_w1, h2h_d, h2h_w2 = await get_h2h(session, team1["id"], team2["id"])
         
-        score1 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form1)
-        score2 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form2)
-        
-        total = score1 + score2 + (h2h_w1 * 2) + (h2h_w2 * 2) + (h2h_d * 1)
-        if total == 0:
+        # Простая оценка уверенности с xG
+        total_score = score1 + score2 + (h2h_w1 * 2) + (h2h_w2 * 2) + (h2h_d * 1)
+        if total_score == 0:
             prediction = "Ничья"
-            confidence = 33
+            conf = 33
         else:
-            prob1 = (score1 + h2h_w1 * 2) / total * 100
-            prob2 = (score2 + h2h_w2 * 2) / total * 100
-            
+            prob1 = (score1 + h2h_w1 * 2) / total_score * 100
+            prob2 = (score2 + h2h_w2 * 2) / total_score * 100
             if prob1 > prob2 + 15:
                 prediction = f"Победа {team1_name}"
-                confidence = int(prob1)
+                conf = int(prob1)
             elif prob2 > prob1 + 15:
                 prediction = f"Победа {team2_name}"
-                confidence = int(prob2)
+                conf = int(prob2)
             else:
                 prediction = "Ничья или близкий матч"
-                confidence = 40
+                conf = 40
         
         return {
             "team1": team1["name"],
@@ -134,27 +142,19 @@ async def analyze_match(team1_name, team2_name):
             "form2": "".join(form2) if form2 else "N/A",
             "h2h": f"{h2h_w1} - {h2h_d} - {h2h_w2}",
             "prediction": prediction,
-            "confidence": confidence
+            "confidence": conf,
+            "xG1": xg1,
+            "xG2": xg2
         }, None
 
-# --- ОБРАБОТЧИКИ КОМАНД ---
+# --- ОБРАБОТЧИКИ ---
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer(
-        "👋 Привет! Я бот для анализа футбольных матчей.\n\n"
-        "📋 Команды:\n"
-        "/help — помощь\n"
-        "/predict Спартак Зенит — прогноз на матч"
-    )
+    await message.answer("👋 Привет! Я бот для анализа футбольных матчей с xG.\n\n/predict Спартак Зенит\n/help")
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    await message.answer(
-        "🆘 Как пользоваться:\n\n"
-        "Напиши /predict и через пробел названия двух команд.\n"
-        "💡 Совет: пиши названия на английском для точности\n"
-        "   (Spartak, Zenit, Real Madrid, Barcelona)"
-    )
+    await message.answer("🆘 /predict Команда1 Команда2\n\nНазвания лучше на английском.\nТеперь с xG, формой и H2H!")
 
 @dp.message(Command("predict"))
 async def cmd_predict(message: types.Message):
@@ -164,30 +164,34 @@ async def cmd_predict(message: types.Message):
         return
     
     team1, team2 = args[1], args[2]
-    await message.answer(f" Анализирую {team1} vs {team2}...")
-    
+    await message.answer(f"🔍 Анализирую {team1} vs {team2} с xG...")
+
     result, error = await analyze_match(team1, team2)
-    
     if error:
-        await message.answer(f" {error}")
+        await message.answer(error)
         return
-    
+
+    xG1 = result["xG1"]
+    xG2 = result["xG2"]
+    xg_diff = xG1 - xG2
+
     answer = (
         f"📊 *Анализ: {result['team1']} — {result['team2']}*\n\n"
         f"🔥 Форма {result['team1']} (посл. 5): {result['form1']}\n"
         f"🔥 Форма {result['team2']} (посл. 5): {result['form2']}\n"
-        f"🤝 Личные встречи (W-D-L): {result['h2h']}\n\n"
-        f"🧠 *Прогноз:* {result['prediction']}\n"
+        f"🤝 H2H: {result['h2h']}\n\n"
+        f"📈 *Прогноз:* {result['prediction']}\n"
         f"📈 Уверенность: {result['confidence']}%\n\n"
+        f"⚽ xG: {result['team1']} {xG1} — {result['team2']} {xG2} (разница {xg_diff:+.1f})\n\n"
         f"⚠️ _Прогноз на основе статистики. Играйте ответственно._"
     )
     await message.answer(answer, parse_mode="Markdown")
 
 @dp.message(F.text)
 async def echo_handler(message: types.Message):
-    await message.answer(" Напиши /help для списка команд")
+    await message.answer("Напиши /help для списка команд")
 
-# --- ВЕБ-СЕРВЕР ДЛЯ RENDER ---
+# Веб-сервер (оставляем как было)
 async def handle_ping(request):
     return web.Response(text="Bot is alive!")
 
@@ -201,12 +205,8 @@ async def start_web_server():
     await site.start()
     logging.info(f"Web server started on port {port}")
 
-# --- ЗАПУСК ---
 async def main():
-    await asyncio.gather(
-        start_web_server(),
-        dp.start_polling(bot)
-    )
+    await asyncio.gather(start_web_server(), dp.start_polling(bot))
 
 if __name__ == "__main__":
     try:
