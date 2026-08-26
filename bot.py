@@ -179,7 +179,7 @@ async def analyze_match(team1_name, team2_name):
 # ================= ОБРАБОТЧИК =================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Привет! Я твой xG-бот для анализа футбольных матчей.\n\n"
+    await message.answer("👋 Привет! Я твой Персональный-бот для анализа футбольных матчей.\n\n"
                          "Команды:\n"
                          "/predict Команда1 Команда2 — анализ матча с xG\n"
                          "/today — матчи сегодня\n"
