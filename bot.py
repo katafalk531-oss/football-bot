@@ -69,7 +69,7 @@ async def get_team_form_xg(session, team_id):
             xg_away += fixture.get("teams", {}).get("away", {}).get("statistics", {}).get("xG", {}).get("away", 0) or 0
     
     score1 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form)
-    avg_xg = (xg_home + xg_away) / 2
+    avg_xg = (xg_home + xg_away) / 2 if (xg_home + xg_away) > 0 else 0.0
     return form, score1, round(avg_xg, 2)
 
 async def get_h2h(session, team1_id, team2_id):
