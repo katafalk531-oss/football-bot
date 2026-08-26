@@ -8,7 +8,7 @@ from aiohttp import web, ClientSession
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "7575444568:AAEHYZMjzWvlUHYbB6-ZkDv8e42xpgpV9YA"
-RAPIDAPI_KEY = "0cf379b94fmsh2e9e4e5fbdc2b78p1efe49jsnb7dc15ae2f06"
+RAPIDAPI_KEY = "fbca08bd8c021fae5175a778acbf8fe8"
 # =============================================
 
 logging.basicConfig(level=logging.INFO)
