@@ -1,6 +1,8 @@
 import asyncio
 import logging
 import os
+import time
+from collections import defaultdict
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
@@ -8,53 +10,53 @@ from aiohttp import web, ClientSession
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "7575444568:AAEHYZMjzWvlUHYbB6-ZkDv8e42xpgpV9YA"
-RAPIDAPI_KEY = "fbca08bd8c021fae5175a778acbf8fe8"   # твой новый ключ от api-football
+RAPIDAPI_KEY = "fbca08bd8c021fae5175a778acbf8fe8"
 # =============================================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= xG + signal МОДУЛИ =================
-XG_API = "https://v3.football.api-sports.io/fixtures/statistics"
-XG_HEADERS = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": "v3.football.api-sports.io"
-}
-
-H2H_XG_API = "https://v3.football.api-sports.io/fixtures/headtohead"
-H2H_XG_HEADERS = XG_HEADERS.copy()
-
-TODAY_API = "https://v3.football.api-sports.io/fixtures"
-TODAY_HEADERS = {
-    "X-RapidAPI-Key": RAPIDAPI_KEY,
-    "X-RapidAPI-Host": "v3.football.api-sports.io"
-}
+# ================= ОПТИМИЗАЦИЯ API =================
+CACHE = defaultdict(lambda: {"teams": {}, "fixtures": {}, "h2h": {}})
+CACHE_TTL = 600
+last_call_time = 0
+MIN_INTERVAL = 1.0
+COVERAGE = {39, 140, 78, 135, 41, 61}  # АПЛ, Ла Лига, Бундеслига, Серия А, Лига 1 и т.д.
 
 # ================= ФУНКЦИИ =================
-async def search_team(session, team_name):
-    url = "https://v3.football.api-sports.io/teams"
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "v3.football.api-sports.io"
-    }
-    params = {"name": team_name, "search": team_name}
+async def safe_call(session, url, headers, params=None):
+    global last_call_time
+    now = time.time()
+    if now - last_call_time < MIN_INTERVAL:
+        await asyncio.sleep(MIN_INTERVAL - (now - last_call_time))
+    last_call_time = time.time()
+    
     async with session.get(url, headers=headers, params=params) as resp:
         data = await resp.json()
-        if data.get("response"):
-            return data["response"][0]["team"]
+        if resp.status == 429:
+            await asyncio.sleep(30)
+            return await safe_call(session, url, headers, params)
+        return data
+
+async def search_team(session, team_name):
+    if team_name in CACHE["teams"]:
+        return CACHE["teams"][team_name]
+    url = "https://v3.football.api-sports.io/teams"
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
+    params = {"name": team_name, "search": team_name}
+    data = await safe_call(session, url, headers, params)
+    if data.get("response"):
+        team = data["response"][0]["team"]
+        CACHE["teams"][team_name] = team
+        return team
     return None
 
-async def get_team_form_xg(session, team_id):
+async def get_team_form_xg(session, team_id, team_name=None):
     url = "https://v3.football.api-sports.io/fixtures"
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "v3.football.api-sports.io"
-    }
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
     params = {"team": team_id, "last": 5, "status": "FT"}
-    async with session.get(url, headers=headers, params=params) as resp:
-        data = await resp.json()
-    
+    data = await safe_call(session, url, headers, params)
     form = []
     xg_home = xg_away = 0.0
     for fixture in data.get("response", []):
@@ -67,21 +69,18 @@ async def get_team_form_xg(session, team_id):
             form.append("W" if fixture["goals"]["away"] > fixture["goals"]["home"] else 
                         "L" if fixture["goals"]["away"] < fixture["goals"]["home"] else "D")
             xg_away += fixture.get("teams", {}).get("away", {}).get("statistics", {}).get("xG", {}).get("away", 0) or 0
-    
     score1 = sum(3 if x == "W" else 1 if x == "D" else 0 for x in form)
     avg_xg = (xg_home + xg_away) / 2 if (xg_home + xg_away) > 0 else 0.0
     return form, score1, round(avg_xg, 2)
 
 async def get_h2h(session, team1_id, team2_id):
+    key = f"{team1_id}-{team2_id}"
+    if key in CACHE["h2h"]:
+        return CACHE["h2h"][key]
     url = "https://v3.football.api-sports.io/fixtures/headtohead"
-    headers = {
-        "X-RapidAPI-Key": RAPIDAPI_KEY,
-        "X-RapidAPI-Host": "v3.football.api-sports.io"
-    }
-    params = {"h2h": f"{team1_id}-{team2_id}", "last": 5}
-    async with session.get(url, headers=headers, params=params) as resp:
-        data = await resp.json()
-    
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
+    params = {"h2h": key, "last": 5}
+    data = await safe_call(session, url, headers, params)
     wins1 = wins2 = draws = 0
     for fixture in data.get("response", []):
         if fixture["teams"]["home"]["id"] == team1_id:
@@ -98,11 +97,18 @@ async def get_h2h(session, team1_id, team2_id):
                 wins2 += 1
             else:
                 draws += 1
+    CACHE["h2h"][key] = (wins1, draws, wins2)
     return wins1, draws, wins2
 
+async def get_h2h_xg(session, team1_id, team2_id):
+    # заглушка (можно доработать позже)
+    return 0.0, 0.0, 0.0
+
 async def get_match_xg(session, fixture_id):
-    async with session.get(XG_API, headers=XG_HEADERS, params={"fixture": fixture_id}) as resp:
-        data = await resp.json()
+    url = "https://v3.football.api-sports.io/fixtures/statistics"
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
+    params = {"fixture": fixture_id}
+    data = await safe_call(session, url, headers, params)
     if not data.get("response"):
         return 0.0, 0.0, 0.0
     stats = data["response"][0]
@@ -110,26 +116,12 @@ async def get_match_xg(session, fixture_id):
     away_xg = stats.get("teams", {}).get("away", {}).get("statistics", {}).get("xG", {}).get("away", 0) or 0
     return round(home_xg, 2), round(away_xg, 2), round(home_xg - away_xg, 1)
 
-async def get_h2h_xg(session, team1_id, team2_id):
-    async with session.get(H2H_XG_API, headers=H2H_XG_HEADERS, params={"h2h": f"{team1_id}-{team2_id}", "last": 5}) as resp:
-        data = await resp.json()
-    if not data.get("response"):
-        return 0.0, 0.0, 0.0
-    total_xg1 = total_xg2 = 0.0
-    count = 0
-    for fixture in data.get("response", []):
-        home_xg = fixture.get("teams", {}).get("home", {}).get("statistics", {}).get("xG", {}).get("home", 0) or 0
-        away_xg = fixture.get("teams", {}).get("away", {}).get("statistics", {}).get("xG", {}).get("away", 0) or 0
-        total_xg1 += home_xg
-        total_xg2 += away_xg
-        count += 1
-    return round(total_xg1 / count, 2), round(total_xg2 / count, 2), round((total_xg1 - total_xg2), 2)
-
 async def get_today_matches(session):
     today = datetime.now().strftime("%Y-%m-%d")
     params = {"date": today, "status": "NS"}
-    async with session.get(TODAY_API, headers=TODAY_HEADERS, params=params) as resp:
-        data = await resp.json()
+    url = "https://v3.football.api-sports.io/fixtures"
+    headers = {"X-RapidAPI-Key": RAPIDAPI_KEY, "X-RapidAPI-Host": "v3.football.api-sports.io"}
+    data = await safe_call(session, url, headers, params)
     return data.get("response", [])[:20]
 
 async def analyze_match(team1_name, team2_name):
@@ -140,8 +132,8 @@ async def analyze_match(team1_name, team2_name):
         if not team1 or not team2:
             return None, "Команды не найдены."
 
-        form1, score1, xg1 = await get_team_form_xg(session, team1["id"])
-        form2, score2, xg2 = await get_team_form_xg(session, team2["id"])
+        form1, score1, xg1 = await get_team_form_xg(session, team1["id"], team1_name)
+        form2, score2, xg2 = await get_team_form_xg(session, team2["id"], team2_name)
         h2h_w1, h2h_d, h2h_w2 = await get_h2h(session, team1["id"], team2["id"])
         
         fixture_id = None
@@ -179,7 +171,7 @@ async def analyze_match(team1_name, team2_name):
 # ================= ОБРАБОТЧИК =================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Привет! Я твой Персональный-бот для анализа футбольных матчей.\n\n"
+    await message.answer("👋 Привет! Я твой xG-бот для анализа футбольных матчей.\n\n"
                          "Команды:\n"
                          "/predict Команда1 Команда2 — анализ матча с xG\n"
                          "/today — матчи сегодня\n"
