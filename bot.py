@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+import json
 from collections import defaultdict
 from datetime import datetime
 from aiogram import Bot, Dispatcher, types, F
@@ -17,8 +18,9 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
-# ================= ОПТИМИЗАЦИЯ API =================
+# ================= УВЕЛИЧЕННОЕ КЭШИРОВАНИЕ (24 часа) =================
 CACHE = defaultdict(lambda: {"teams": {}, "fixtures": {}, "h2h": {}})
+CACHE_TTL = 86400
 last_call_time = 0
 MIN_INTERVAL = 1.0
 ERROR_LIMIT = 429
