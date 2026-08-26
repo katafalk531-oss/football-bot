@@ -179,21 +179,30 @@ async def analyze_match(team1_name, team2_name):
 # ================= ОБРАБОТЧИК =================
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message):
-    await message.answer("👋 Привет! Я xG-бот с умным сигналом.\n\n/predict Команда1 Команда2\n/today — матчи сегодня\n/signal — топ-3 умных сигнала")
+    await message.answer("👋 Привет! Я твой xG-бот для анализа футбольных матчей.\n\n"
+                         "Команды:\n"
+                         "/predict Команда1 Команда2 — анализ матча с xG\n"
+                         "/today — матчи сегодня\n"
+                         "/signal — умные сигналы сегодня\n\n"
+                         "Я пишу только на русском.")
 
 @dp.message(Command("help"))
 async def cmd_help(message: types.Message):
-    await message.answer("🆘 /predict Спартак Зенит — анализ с xG\n/today — матчи сегодня\n/signal — топ-3 лучших сегодня (xG + Value + H2H)")
+    await message.answer("🆘 Как пользоваться:\n\n"
+                         "/predict Спартак Зенит — полный анализ с xG, формой и H2H\n"
+                         "/today — список матчей на сегодня\n"
+                         "/signal — топ-3 лучших матчей для ставок\n\n"
+                         "Все ответы на русском.")
 
 @dp.message(Command("predict"))
 async def cmd_predict(message: types.Message):
     args = message.text.split(maxsplit=2)
     if len(args) < 3:
-        await message.answer("❗ Пример: /predict Spartak Zenit")
+        await message.answer("❗ Пример: /predict Спартак Зенит")
         return
     
     team1, team2 = args[1], args[2]
-    await message.answer(f"🔍 Анализиваю {team1} vs {team2} с xG...")
+    await message.answer(f"🔍 Анализирую матч {team1} vs {team2} с xG...")
 
     result, error = await analyze_match(team1, team2)
     if error:
@@ -235,7 +244,7 @@ async def cmd_today(message: types.Message):
 
 @dp.message(Command("signal"))
 async def cmd_signal(message: types.Message):
-    await message.answer("🔥 Генерирую УМНЫЙ сигнал с xG, Value и H2H...")
+    await message.answer("🔥 Генерирую умный сигнал с xG, Value и H2H...")
 
     async with ClientSession() as session:
         matches = await get_today_matches(session)
@@ -283,6 +292,13 @@ async def cmd_signal(message: types.Message):
 
 @dp.message(F.text)
 async def echo_handler(message: types.Message):
+    text = message.text.lower()
+    is_russian = any(char in text for char in "йцукенгшщзхъфывапролджэячсмитьбю")
+    
+    if is_russian:
+        await message.answer("Я пишу только на русском. Используй /help")
+        return
+    
     await message.answer("Напиши /help для списка команд")
 
 # Веб-сервер
