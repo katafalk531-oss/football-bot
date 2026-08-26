@@ -205,21 +205,21 @@ async def cmd_predict(message: types.Message):
     team1, team2 = args[1], args[2]
     await message.answer(f"🔍 Анализирую {team1} vs {team2} с xG...")
 
-    result, error = await analyze_match(team1, team2)
+ result, error = await analyze_match(team1, team2)
     if error:
         await message.answer(error)
         return
 
     xG1 = result["xG1"]
     xG2 = result["xG2"]
-    xg_diff = xG1 - xG2
+    xg_diff = result["xg_diff"]
 
     answer = (
         f"📊 *Анализ: {result['team1']} — {result['team2']}*\n\n"
-        f"🔥 Форма {result['team1']} (посл. 5): {result['form1']}\n"
-        f"🔥 Форма {result['team2']} (посл. 5): {result['form2']}\n"
+        f"🔥 Форма {result['team1']}: {result['form1']}\n"
+        f"🔥 Форма {result['team2']}: {result['form2']}\n"
         f"🤝 H2H: {result['h2h']}\n\n"
-        f"📈 *Прогноз:* {result['prediction']}\n"
+        f"🧠 *Прогноз:* {result['prediction']}\n"
         f"📈 Уверенность: {result['confidence']}%\n\n"
         f"⚽ xG: {result['team1']} {xG1} — {result['team2']} {xG2} (разница {xg_diff:+.1f})\n\n"
         f"⚠️ _Прогноз на основе статистики. Играйте ответственно._"
