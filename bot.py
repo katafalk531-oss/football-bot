@@ -10,8 +10,8 @@ from aiogram.filters import Command
 from aiohttp import web, ClientSession
 
 # ================= НАСТРОЙКИ =================
-BOT_TOKEN = "7575444568:AAEHYZMjzWvlUHYbB6-ZkDv8e42xpgpV9YA"
-RAPIDAPI_KEY = "fbca08bd8c021fae5175a778acbf8fe8"
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+RAPIDAPI_KEY = os.getenv("RAPIDAPI_KEY")
 # =============================================
 
 logging.basicConfig(level=logging.INFO)
@@ -19,7 +19,7 @@ bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
 # ================= УВЕЛИЧЕННОЕ КЭШИРОВАНИЕ (24 часа) =================
-CACHE = defaultdict(lambda: {"teams": {}, "fixtures": {}, "h2h": {}})
+CACHE = {"teams": {}, "fixtures": {}, "h2h": {}}
 CACHE_TTL = 86400
 last_call_time = 0
 MIN_INTERVAL = 1.0
@@ -293,8 +293,8 @@ async def echo_handler(message: types.Message):
     text = message.text.lower()
     is_russian = any(char in text for char in "йцукенгшщзхъфывапролджэячсмитьбю")
     
-    if is_russian:
-        await message.answer("Я пишу только на русском. Используй /help")
+    if not is_russian:
+        await message.answer("Пожалуйста, используйте русский язык. Используй /help")
         return
     
     await message.answer("Напиши /help для списка команд")
